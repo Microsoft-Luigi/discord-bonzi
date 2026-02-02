@@ -12,3 +12,7 @@ node_modules/
 # Ignore OS system files
 .DS_Store
 Thumbs.db
+
+#ignore pycache
+__pycache__
+cogs/__pycache__

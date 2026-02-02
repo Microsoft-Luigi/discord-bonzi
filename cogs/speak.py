@@ -1,10 +1,27 @@
 # cogs/speak.py
 import asyncio
 import urllib.parse
+import random
 
 import discord
 from discord.ext import commands
 
+facts_list = ['The situation you are in is very dangerous. The likelihood of you dying and not surviving within the next 5 minutes is 87.61%',
+            'You could stand to lose a few pounds',
+            'Cellular phones will not give you cancer... only hepatitis.',
+            'Pants were invented by Sanders in the 16th century to avoid poseidon\'s wrath.',
+            'The atomic weight of germanium 72.64',
+            'The schrodinger\'s cat paradox outlines a situation in which a cat in a box must be considered, for all intensive purposes, simultaneously alive and dead. Schrodinger created this paradox as a justification for killing cats.',
+            'Abraham Lincoln signed the emancipation proclamation. Freeing the slaves. Like everything he did lincoln freed the slaves while sleepwalking and later had no memory of the event.', 
+            'In 1948, at the request of a dying boy, baseball legend Babe Ruth ate 75 hot dogs then died of hot dog poisoning.', 
+            'William Shakespeare did not exist. His plays were masterminded in 1589 by Fracis Bacon who used a Ouija board to enslave playwriting ghosts.', 
+            'Haley\'s Comet can be viewed over Earth every 76 years. For the other 75 it retreats to the heart of the sun where it hibernates undisturbed.', 
+            'In greek myth, prometheus stole fire from the gods and gave it to humankind. The jewelry, he kept for himself.', 
+            'The first person to prove that cow\'s milk is drinkable was very, very, thirsty.',
+            'According to the most advanced algorithms, the world\'s best name is Craig.',
+            'To make a photocopier, simply photocopy a mirror'
+            'Dreams are the subconcious mind\'s way of remind people to go to school naked and have their teeth fall out.'
+            ]
 
 class Speak(commands.Cog):
     def __init__(self, client: commands.Bot):
@@ -77,9 +94,13 @@ class Speak(commands.Cog):
             self.client.loop.call_soon_threadsafe(done_evt.set)
 
         vc.play(source, after=after_tts)
-        await ctx.send("🗣️ Speaking…")
+        await ctx.send(text)
         await done_evt.wait()
 
+    @commands.command(name="fact")
+    async def fact(self, ctx: commands.Context):
+        random_str = random.choice(facts_list)
+        await ctx.send(random_str)
 
 async def setup(client: commands.Bot):
     await client.add_cog(Speak(client))
