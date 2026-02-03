@@ -37,7 +37,7 @@ async def main():
 
     async with bot:
         # IMPORTANT: load Music first (Speak depends on it for resume)
-        extensions = ["cogs.music", "cogs.speak"]
+        extensions = ["cogs.music", "cogs.playerui", "cogs.speak"]
         for ext in extensions:
             try:
                 await bot.load_extension(ext)

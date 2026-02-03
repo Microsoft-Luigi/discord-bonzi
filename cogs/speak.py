@@ -19,7 +19,7 @@ facts_list = ['The situation you are in is very dangerous. The likelihood of you
             'In greek myth, prometheus stole fire from the gods and gave it to humankind. The jewelry, he kept for himself.', 
             'The first person to prove that cow\'s milk is drinkable was very, very, thirsty.',
             'According to the most advanced algorithms, the world\'s best name is Craig.',
-            'To make a photocopier, simply photocopy a mirror'
+            'To make a photocopier, simply photocopy a mirror',
             'Dreams are the subconcious mind\'s way of remind people to go to school naked and have their teeth fall out.'
             ]
 
