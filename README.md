@@ -14,17 +14,17 @@ Since bonzi can play music and talk he has the following dependencies:
 
 installed through pip:
 
-&nbsp;	-PyNaCl
+ 	-PyNaCl
 
-&nbsp;	-python-dotenv
+ 	-python-dotenv
 
-&nbsp;	-yt-dlp
+ 	-yt-dlp
 
-&nbsp;	-discord.py
+ 	-discord.py with voice support (davey)
 
 
 
 additional required operating system modules:
 
-&nbsp;	-ffmpeg
+ 	-ffmpeg
 
