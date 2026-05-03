@@ -1,58 +1,58 @@
 import asyncio
 import random
-import wavelink
-from discord.ext import commands
 import discord
+from discord.ext import commands
+import wavelink
 
 
 class LavalinkPlayer(wavelink.Player):
-    """Custom player to store queue + metadata."""
+    """Custom player with queue + metadata."""
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.queue = asyncio.Queue()
         self.current = None
 
     async def play_next(self):
+        """Play the next track in the queue."""
         if self.is_playing() or self.is_paused():
             return
 
         try:
             track = self.queue.get_nowait()
         except asyncio.QueueEmpty:
-            self.current_track = None
+            self.current = None
             return
 
         self.current = track
         await self.play(track)
-        
+
 
 class Music(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-
-        # Start Lavalink node when bot is ready
         bot.loop.create_task(self.start_lavalink())
 
     async def start_lavalink(self):
+        """Connect to Lavalink node using Wavelink 3.x API."""
         await self.bot.wait_until_ready()
-
-        # Create Wavelink client if not already created
-        if not hasattr(self.bot, "wavelink"):
-            self.bot.wavelink = wavelink.Client(self.bot)
 
         node = wavelink.Node(
             uri="http://localhost:2333",
             password="youshallnotpass",
-            secure=False,
         )
 
-        await self.bot.wavelink.initiate_node(node)
-        print("Lavalink node connected.")
+        await wavelink.NodePool.connect(
+            client=self.bot,
+            nodes=[node]
+        )
+
+        print("Lavalink node connected (Wavelink 3.x).")
 
     # ---------------------------
     # Voice helpers
     # ---------------------------
     async def ensure_voice(self, ctx):
+        """Ensure bot is connected to the user's voice channel."""
         if ctx.author.voice is None:
             await ctx.send("Join a voice channel first.")
             return None
@@ -90,14 +90,14 @@ class Music(commands.Cog):
         if vc is None:
             return
 
-        # Search YouTube (Lavalink handles extraction)
-        tracks = await wavelink.YouTubeTrack.search(query=query)
+        # Wavelink 3.x search
+        results = await wavelink.Playable.search(query)
 
-        if not tracks:
+        if not results:
             await ctx.send("No results found.")
             return
 
-        track = tracks[0]
+        track = results[0]
         await vc.queue.put(track)
 
         if not vc.is_playing() and not vc.is_paused():
