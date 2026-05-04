@@ -78,19 +78,24 @@ class Music(commands.Cog):
             return
     
         try:
-            tracks = await wavelink.Playable.search(query)
+            result = await wavelink.Playable.search(query)
         except wavelink.LavalinkLoadException:
-            await ctx.send(
-                "⚠️ Failed to load this track.\n"
-                "YouTube is currently broken. Try SoundCloud or another link."
-            )
+            await ctx.send("⚠️ Failed to load this track.")
             return
     
-        if not tracks:
-            await ctx.send("No results found.")
+        # Playlist handling
+        if isinstance(result, wavelink.Playlist):
+            for track in result.tracks:
+                player.queue.put(track)
+    
+            await ctx.send(f"📀 Added playlist **{result.name}** with `{len(result.tracks)}` tracks")
+    
+            if not player.playing and not player.paused:
+                await player.play(player.queue.get())
             return
     
-        track = tracks[0]
+        # Single track handling
+        track = result[0]
         player.queue.put(track)
     
         if not player.playing and not player.paused:
