@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Bonzi ACD Inspector</title>
+
+<style>
+
+body {
+    margin: 0;
+    background: #202020;
+    color: white;
+    font-family: Arial, sans-serif;
+}
+
+#container {
+    display: flex;
+    height: 100vh;
+}
+
+.panel {
+    width: 300px;
+    overflow-y: auto;
+    padding: 12px;
+    box-sizing: border-box;
+    border-right: 1px solid #444;
+}
+
+#rightPanel {
+    border-left: 1px solid #444;
+    border-right: none;
+}
+
+#centerPanel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow: hidden;
+}
+
+section {
+    margin-bottom: 16px;
+}
+
+h3 {
+    margin-top: 0;
+    margin-bottom: 8px;
+}
+
+button,
+select,
+input {
+    margin: 3px;
+    padding: 4px 8px;
+    font-size: 14px;
+}
+
+#viewer {
+    width: 400px;
+    height: 320px;
+
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+
+    border: 2px solid white;
+
+    background:
+        repeating-conic-gradient(
+            #444 0% 25%,
+            #222 0% 50%
+        ) 50% / 20px 20px;
+}
+
+#scrubber {
+    width: 80%;
+}
+
+#info {
+    width: 90%;
+    font-family: Consolas, monospace;
+    white-space: pre-wrap;
+    margin-top: 10px;
+}
+
+.layerEntry,
+.branchEntry {
+    padding: 4px;
+    margin: 2px 0;
+    background: #2e2e2e;
+}
+
+#layersPanel,
+#branchPanel {
+    max-height: 250px;
+    overflow-y: auto;
+}
+
+</style>
+</head>
+
+<body>
+
+<div id="container">
+
+    <div class="panel">
+
+        <section>
+            <h3>Animation</h3>
+
+            <select id="animationSelect"></select>
+
+            <br>
+
+            <button id="prevAnimationBtn">◀</button>
+            <button id="nextAnimationBtn">▶</button>
+
+            <br>
+
+            <button id="playBtn">Play</button>
+            <button id="stopBtn">Stop</button>
+        </section>
+
+        <section>
+            <h3>Frame</h3>
+
+            <button id="prevFrameBtn">◀ Frame</button>
+            <button id="nextFrameBtn">Frame ▶</button>
+
+            <br>
+
+            <input
+                id="frameInput"
+                type="number"
+                min="0"
+                value="0">
+
+            <button id="jumpFrameBtn">
+                Atlas Image
+            </button>
+
+            <br>
+
+            <input
+                id="scrubber"
+                type="range"
+                min="0"
+                max="0"
+                value="0">
+        </section>
+
+        <section>
+            <h3>Mouth Override</h3>
+
+            <select id="mouthSelect">
+                <option value="">None</option>
+            </select>
+        </section>
+
+        <section>
+            <h3>Audio</h3>
+
+            <button id="playCurrentSoundBtn">
+                Play Current Sound
+            </button>
+
+            <br>
+
+            <label>
+                <input
+                    type="checkbox"
+                    id="playSoundEffects"
+                    checked>
+                Auto Play Sounds
+            </label>
+        </section>
+
+    </div>
+
+    <div id="centerPanel">
+
+        <h2>Bonzi ACD Inspector</h2>
+
+        <canvas
+            id="viewer"
+            width="200"
+            height="160">
+        </canvas>
+
+        <div id="info"></div>
+
+    </div>
+
+    <div
+        id="rightPanel"
+        class="panel">
+
+        <section>
+            <h3>Layers</h3>
+
+            <div id="layersPanel"></div>
+        </section>
+
+        <section>
+            <h3>Branch Data</h3>
+
+            <div id="branchPanel"></div>
+        </section>
+
+    </div>
+
+</div>
+
+<script>
+
+const ATLAS_SRC =
+    "bonzi_atlas.webp";
+
+const JSON_SRC =
+    "bonzi_animations.json";
+
+const FRAME_WIDTH = 200;
+const FRAME_HEIGHT = 160;
+const ATLAS_COLUMNS = 36;
+
+const DURATION_MULTIPLIER = 10;
+
+const canvas =
+    document.getElementById("viewer");
+
+const ctx =
+    canvas.getContext("2d");
+
+ctx.imageSmoothingEnabled = false;
+
+const atlas = new Image();
+atlas.src = ATLAS_SRC;
+
+let acdData = null;
+
+let animationNames = [];
+
+let currentAnimationName = null;
+let currentAnimationIndex = 0;
+let currentFrameIndex = 0;
+
+let animationTimer = null;
+
+let currentMouthSet = {};
+let selectedMouthType = "";
+
+let currentFrame = null;
+let currentDrawnFrames = [];
+
+const animationSelect =
+    document.getElementById("animationSelect");
+
+const mouthSelect =
+    document.getElementById("mouthSelect");
+
+const scrubber =
+    document.getElementById("scrubber");
+
+const info =
+    document.getElementById("info");
+
+async function loadData()
+{
+    const response =
+        await fetch(JSON_SRC);
+
+    acdData =
+        await response.json();
+
+    animationNames =
+        Object.keys(
+            acdData.animations
+        ).sort();
+
+    animationSelect.innerHTML = "";
+
+    for (const name of animationNames)
+    {
+        const option =
+            document.createElement(
+                "option"
+            );
+
+        option.value = name;
+        option.textContent = name;
+
+        animationSelect.appendChild(
+            option
+        );
+    }
+
+    selectAnimation(0);
+}
+
+function drawAtlasImage(
+    frameId,
+    offsetX = 0,
+    offsetY = 0
+)
+{
+    const col =
+        frameId % ATLAS_COLUMNS;
+
+    const row =
+        Math.floor(
+            frameId /
+            ATLAS_COLUMNS
+        );
+
+    ctx.drawImage(
+        atlas,
+
+        col * FRAME_WIDTH,
+        row * FRAME_HEIGHT,
+
+        FRAME_WIDTH,
+        FRAME_HEIGHT,
+
+        offsetX,
+        offsetY,
+
+        FRAME_WIDTH,
+        FRAME_HEIGHT
+    );
+
+    currentDrawnFrames.push(
+        frameId
+    );
+}
+
+function updateMouthDropdown(frame)
+{
+    if (
+        frame.mouths &&
+        Object.keys(frame.mouths)
+            .length > 0
+    )
+    {
+        currentMouthSet =
+            frame.mouths;
+    }
+
+    const old =
+        selectedMouthType;
+
+    mouthSelect.innerHTML =
+        `<option value="">
+            None
+         </option>`;
+
+    for (
+        const mouth of
+        Object.keys(currentMouthSet)
+    )
+    {
+        const option =
+            document.createElement(
+                "option"
+            );
+
+        option.value = mouth;
+        option.textContent =
+            `${mouth} (${currentMouthSet[mouth]})`;
+
+        mouthSelect.appendChild(
+            option
+        );
+    }
+
+    if (
+        old &&
+        currentMouthSet[old]
+    )
+    {
+        selectedMouthType = old;
+    }
+    else
+    {
+        selectedMouthType = "";
+    }
+
+    mouthSelect.value =
+        selectedMouthType;
+}
+
+function updateLayersPanel(frame)
+{
+    const panel =
+        document.getElementById(
+            "layersPanel"
+        );
+
+    panel.innerHTML = "";
+
+    if (
+        !frame ||
+        !frame.images
+    )
+    {
+        return;
+    }
+
+    frame.images.forEach(
+        (image, index) =>
+        {
+            const div =
+                document.createElement(
+                    "div"
+                );
+
+            div.className =
+                "layerEntry";
+
+            div.innerHTML =
+                `Layer ${index}
+                 : Image ${image.id}`;
+
+            panel.appendChild(
+                div
+            );
+        }
+    );
+}
+
+function updateBranchPanel(frame)
+{
+    const panel =
+        document.getElementById(
+            "branchPanel"
+        );
+
+    panel.innerHTML = "";
+
+    if (!frame)
+        return;
+
+    const exit =
+        document.createElement(
+            "div"
+        );
+
+    exit.className =
+        "branchEntry";
+
+    exit.textContent =
+        `ExitBranch: ${
+            frame.exitBranch ??
+            "none"
+        }`;
+
+    panel.appendChild(exit);
+
+    if (
+        frame.branching &&
+        frame.branching.length
+    )
+    {
+        frame.branching.forEach(
+            branch =>
+            {
+                const div =
+                    document.createElement(
+                        "div"
+                    );
+
+                div.className =
+                    "branchEntry";
+
+                div.textContent =
+                    `BranchTo ${branch.branchTo}
+                     (${branch.probability}%)`;
+
+                panel.appendChild(
+                    div
+                );
+            }
+        );
+    }
+}
+
+function drawAcdFrame(frame)
+{
+    currentFrame = frame;
+
+    ctx.clearRect(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+
+    currentDrawnFrames = [];
+
+    updateMouthDropdown(
+        frame
+    );
+
+    for (
+        let i =
+            frame.images.length - 1;
+        i >= 0;
+        i--
+    )
+    {
+        const image =
+            frame.images[i];
+
+        drawAtlasImage(
+            image.id,
+            image.offsetX || 0,
+            image.offsetY || 0
+        );
+    }
+
+    if (
+        selectedMouthType &&
+        currentMouthSet[
+            selectedMouthType
+        ]
+    )
+    {
+        drawAtlasImage(
+            currentMouthSet[
+                selectedMouthType
+            ]
+        );
+    }
+
+    updateLayersPanel(frame);
+    updateBranchPanel(frame);
+    updateInfo();
+}
+
+function normalizeSound(path)
+{
+    if (!path)
+        return null;
+
+    return path.replace(
+        /\\/g,
+        "/"
+    );
+}
+
+function playSoundEffect(path)
+{
+    const sound =
+        normalizeSound(path);
+
+    if (!sound)
+        return;
+
+    const audio =
+        new Audio(sound);
+
+    audio.play()
+         .catch(console.error);
+}
+
+function updateInfo()
+{
+    if (
+        !currentFrame ||
+        !currentAnimationName
+    )
+        return;
+
+    info.textContent =
+`Animation:
+${currentAnimationName}
+
+Frame:
+${currentFrameIndex + 1}
+
+Duration:
+${currentFrame.duration}
+
+ExitBranch:
+${currentFrame.exitBranch}
+
+Sound:
+${currentFrame.soundEffect || "none"}
+
+Selected Mouth:
+${selectedMouthType || "none"}
+
+Drawn Atlas IDs:
+${currentDrawnFrames.join(", ")}
+
+Keyboard:
+
+A / D = animation
+Q / E = frame
+
+W = play
+S = stop`;
+}
+
+function selectAnimation(index)
+{
+    if (index < 0)
+    {
+        index =
+            animationNames.length - 1;
+    }
+
+    if (
+        index >=
+        animationNames.length
+    )
+    {
+        index = 0;
+    }
+
+    currentAnimationIndex =
+        index;
+
+    currentAnimationName =
+        animationNames[index];
+
+    animationSelect.value =
+        currentAnimationName;
+
+    const animation =
+        acdData.animations[
+            currentAnimationName
+        ];
+
+    scrubber.max =
+        animation.frames.length - 1;
+
+    currentFrameIndex = 0;
+
+    drawAcdFrame(
+        animation.frames[0]
+    );
+}
+
+function showCurrentFrame()
+{
+    const animation =
+        acdData.animations[
+            currentAnimationName
+        ];
+
+    scrubber.value =
+        currentFrameIndex;
+
+    drawAcdFrame(
+        animation.frames[
+            currentFrameIndex
+        ]
+    );
+}
+
+function playAnimation()
+{
+    stopAnimation();
+
+    const animation =
+        acdData.animations[
+            currentAnimationName
+        ];
+
+    function step()
+    {
+        const frame =
+            animation.frames[
+                currentFrameIndex
+            ];
+
+        if (
+            frame.images &&
+            frame.images.length
+        )
+        {
+            drawAcdFrame(frame);
+        }
+
+        if (
+            document
+                .getElementById(
+                    "playSoundEffects"
+                ).checked
+        )
+        {
+            if (
+                frame.soundEffect
+            )
+            {
+                playSoundEffect(
+                    frame.soundEffect
+                );
+            }
+        }
+
+        if (
+            currentFrameIndex >=
+            animation.frames.length - 1
+        )
+        {
+            stopAnimation();
+            return;
+        }
+
+        let duration =
+            frame.duration || 10;
+
+        currentFrameIndex++;
+
+        scrubber.value =
+            currentFrameIndex;
+
+        animationTimer =
+            setTimeout(
+                step,
+                duration *
+                DURATION_MULTIPLIER
+            );
+    }
+
+    step();
+}
+
+function stopAnimation()
+{
+    if (
+        animationTimer
+    )
+    {
+        clearTimeout(
+            animationTimer
+        );
+    }
+
+    animationTimer =
+        null;
+}
+
+document
+.getElementById(
+    "prevAnimationBtn"
+)
+.onclick = () =>
+{
+    selectAnimation(
+        currentAnimationIndex - 1
+    );
+};
+
+document
+.getElementById(
+    "nextAnimationBtn"
+)
+.onclick = () =>
+{
+    selectAnimation(
+        currentAnimationIndex + 1
+    );
+};
+
+document
+.getElementById(
+    "prevFrameBtn"
+)
+.onclick = () =>
+{
+    currentFrameIndex--;
+
+    if (
+        currentFrameIndex < 0
+    )
+    {
+        currentFrameIndex = 0;
+    }
+
+    showCurrentFrame();
+};
+
+document
+.getElementById(
+    "nextFrameBtn"
+)
+.onclick = () =>
+{
+    const animation =
+        acdData.animations[
+            currentAnimationName
+        ];
+
+    currentFrameIndex++;
+
+    if (
+        currentFrameIndex >=
+        animation.frames.length
+    )
+    {
+        currentFrameIndex =
+            animation.frames.length - 1;
+    }
+
+    showCurrentFrame();
+};
+
+document
+.getElementById(
+    "playBtn"
+)
+.onclick = playAnimation;
+
+document
+.getElementById(
+    "stopBtn"
+)
+.onclick = stopAnimation;
+
+document
+.getElementById(
+    "playCurrentSoundBtn"
+)
+.onclick = () =>
+{
+    if (
+        currentFrame &&
+        currentFrame.soundEffect
+    )
+    {
+        playSoundEffect(
+            currentFrame.soundEffect
+        );
+    }
+};
+
+animationSelect
+.addEventListener(
+    "change",
+    () =>
+    {
+        selectAnimation(
+            animationNames.indexOf(
+                animationSelect.value
+            )
+        );
+    }
+);
+
+mouthSelect
+.addEventListener(
+    "change",
+    () =>
+    {
+        selectedMouthType =
+            mouthSelect.value;
+
+        if (
+            currentFrame
+        )
+        {
+            drawAcdFrame(
+                currentFrame
+            );
+        }
+    }
+);
+
+scrubber
+.addEventListener(
+    "input",
+    () =>
+    {
+        currentFrameIndex =
+            Number(
+                scrubber.value
+            );
+
+        showCurrentFrame();
+    }
+);
+
+document
+.addEventListener(
+    "keydown",
+    event =>
+    {
+        const key =
+            event.key
+                .toLowerCase();
+
+        if (key === "a")
+            selectAnimation(
+                currentAnimationIndex - 1
+            );
+
+        if (key === "d")
+            selectAnimation(
+                currentAnimationIndex + 1
+            );
+
+        if (key === "q")
+            document
+                .getElementById(
+                    "prevFrameBtn"
+                )
+                .click();
+
+        if (key === "e")
+            document
+                .getElementById(
+                    "nextFrameBtn"
+                )
+                .click();
+
+        if (key === "w")
+            playAnimation();
+
+        if (key === "s")
+            stopAnimation();
+    }
+);
+
+atlas.onload =
+    loadData;
+
+</script>
+
+</body>
+</html>

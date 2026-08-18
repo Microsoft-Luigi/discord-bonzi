@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Bonzi Animation Tester</title>
+
+<style>
+    body {
+        margin: 0;
+        background: #202020;
+        color: white;
+        font-family: Arial, sans-serif;
+        text-align: center;
+    }
+
+    h1 {
+        margin-top: 20px;
+    }
+
+    #controls {
+        margin: 20px;
+    }
+
+    button,
+    select,
+    input {
+        font-size: 16px;
+        padding: 6px 10px;
+        margin: 4px;
+    }
+
+    #viewer {
+        border: 2px solid white;
+
+        /*
+           Internal canvas size is 200x160.
+           Visual size is scaled up.
+        */
+        width: 400px;
+        height: 320px;
+
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+
+        background:
+            repeating-conic-gradient(
+                #444 0% 25%,
+                #222 0% 50%
+            ) 50% / 20px 20px;
+    }
+
+    #info {
+        margin-top: 12px;
+        font-family: Consolas, monospace;
+        white-space: pre-line;
+    }
+</style>
+</head>
+
+<body>
+
+<h1>Bonzi Animation Tester</h1>
+
+<div id="controls">
+    <button id="prevAnimationBtn">◀ Animation</button>
+
+    <select id="animationSelect"></select>
+
+    <button id="nextAnimationBtn">Animation ▶</button>
+
+    <br>
+
+    <button id="playBtn">Play</button>
+    <button id="stopBtn">Stop</button>
+    <button id="prevFrameBtn">◀ Frame</button>
+    <button id="nextFrameBtn">Frame ▶</button>
+
+    <br>
+
+    <label>
+        Frame:
+        <input
+            id="frameInput"
+            type="number"
+            value="0"
+            min="0"
+        >
+    </label>
+
+    <button id="jumpFrameBtn">Jump</button>
+
+    <br>
+
+    <label>
+        Mouth:
+        <select id="mouthSelect">
+            <option value="">None</option>
+        </select>
+    </label>
+
+    <br>
+
+    <label>
+        <input
+            type="checkbox"
+            id="playSoundEffects"
+            checked>
+        Play Sound Effects
+    </label>
+
+    <button id="playCurrentSoundBtn">
+        Play Current Sound
+    </button>
+
+</div>
+
+<canvas
+    id="viewer"
+    width="200"
+    height="160">
+</canvas>
+
+<div id="info"></div>
+
+<script>
+const ATLAS_SRC = "bonzi_atlas.webp";
+const ACD_JSON_SRC = "bonzi_animations.json";
+
+const FRAME_WIDTH = 200;
+const FRAME_HEIGHT = 160;
+const ATLAS_COLUMNS = 36;
+
+/*
+    Timing multiplier.
+
+    The ACD commonly uses Duration = 10 for normal frames.
+    If Bonzi is too slow, lower this.
+    If Bonzi is too fast, raise this.
+
+    10 means:
+        Duration 10 = 100 ms
+        Duration 20 = 200 ms
+        Duration 25 = 250 ms
+*/
+const DURATION_MULTIPLIER = 10;
+
+const canvas = document.getElementById("viewer");
+const ctx = canvas.getContext("2d");
+
+ctx.imageSmoothingEnabled = false;
+
+const atlas = new Image();
+atlas.src = ATLAS_SRC;
+
+let acdData = null;
+let atlasSource = atlas;
+
+
+let animationNames = [];
+let currentAnimationName = null;
+let currentAnimationIndex = 0;
+let currentFrameIndexInAnimation = 0;
+
+let animationTimer = null;
+let isPlaying = false;
+
+let currentDrawnFrameIds = [];
+
+
+
+const animationSelect = document.getElementById("animationSelect");
+const info = document.getElementById("info");
+const frameInput = document.getElementById("frameInput");
+const mouthSelect = document.getElementById("mouthSelect");
+
+let currentMouthSet = {};
+let selectedMouthType = "";
+
+/*
+    Load JSON generated from the ACD.
+*/
+
+async function loadAcdJson() {
+    const response = await fetch(ACD_JSON_SRC);
+
+    if (!response.ok) {
+        throw new Error(
+            `Could not load ${ACD_JSON_SRC}`
+        );
+    }
+
+    acdData = await response.json();
+
+    animationNames = Object.keys(acdData.animations);
+
+    animationNames.sort((a, b) =>
+        a.localeCompare(b)
+    );
+
+    populateAnimationDropdown();
+
+    if (animationNames.length > 0) {
+        selectAnimationByIndex(0);
+    }
+}
+
+/*
+    Dropdown setup
+*/
+
+function populateAnimationDropdown() {
+    animationSelect.innerHTML = "";
+
+    for (const name of animationNames) {
+        const option = document.createElement("option");
+
+        option.value = name;
+        option.textContent = name;
+
+        animationSelect.appendChild(option);
+    }
+}
+
+function updateMouthDropdown(frame) {
+    const previousSelection = selectedMouthType;
+
+    mouthSelect.innerHTML = "";
+
+    const noneOption = document.createElement("option");
+    noneOption.value = "";
+    noneOption.textContent = "None";
+    mouthSelect.appendChild(noneOption);
+
+    if (
+        frame &&
+        frame.mouths &&
+        Object.keys(frame.mouths).length > 0
+    ) {
+        currentMouthSet = frame.mouths;
+    }
+
+    const mouthNames = Object.keys(currentMouthSet);
+
+    for (const name of mouthNames) {
+        const option = document.createElement("option");
+        option.value = name;
+        option.textContent = `${name} (${currentMouthSet[name]})`;
+        mouthSelect.appendChild(option);
+    }
+
+    if (
+        previousSelection &&
+        currentMouthSet[previousSelection] !== undefined
+    ) {
+        selectedMouthType = previousSelection;
+    } else {
+        selectedMouthType = "";
+    }
+
+    mouthSelect.value = selectedMouthType;
+}
+
+/*
+    Draw a single image ID from the atlas.
+
+    This does NOT clear the canvas.
+    That lets us draw layered ACD frames.
+*/
+
+function drawAtlasImage(frameId, offsetX = 0, offsetY = 0) {
+    if (frameId === null || frameId === undefined) {
+        return;
+    }
+
+    frameId = Number(frameId);
+
+    const col = frameId % ATLAS_COLUMNS;
+    const row = Math.floor(frameId / ATLAS_COLUMNS);
+
+    const sx = col * FRAME_WIDTH;
+    const sy = row * FRAME_HEIGHT;
+
+    ctx.drawImage(
+        atlasSource,
+
+        sx,
+        sy,
+        FRAME_WIDTH,
+        FRAME_HEIGHT,
+
+        offsetX,
+        offsetY,
+        FRAME_WIDTH,
+        FRAME_HEIGHT
+    );
+
+    currentDrawnFrameIds.push(frameId);
+}
+
+function playSoundEffect(path)
+{
+    if (!path)
+        return;
+
+    const normalized =
+        path.replace(/\\/g, "/");
+
+    const fullPath =
+        normalized;
+
+    try
+    {
+        const audio =
+            new Audio(fullPath);
+
+        audio.volume = 1.0;
+
+        audio.play().catch(
+            console.error
+        );
+    }
+    catch(error)
+    {
+        console.error(error);
+    }
+}
+
+/*
+    Draw one full ACD frame.
+
+    ACD frames can contain multiple images.
+    Example:
+        image 26
+        image 0
+
+    Those are drawn in order.
+*/
+
+function drawAcdFrame(frame) {
+    ctx.clearRect(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+
+    currentDrawnFrameIds = [];
+
+    if (!frame || !frame.images) {
+        updateMouthDropdown(frame);
+        updateInfo();
+        return;
+    }
+
+    /*
+        Update mouth dropdown if this frame defines mouths.
+        The dropdown keeps the last known mouth set.
+    */
+    updateMouthDropdown(frame);
+
+    /*
+        Draw image layers in reverse order.
+        This makes base images draw first and overlays draw last.
+    */
+    for (let i = frame.images.length - 1; i >= 0; i--) {
+        const image = frame.images[i];
+
+        drawAtlasImage(
+            image.id,
+            image.offsetX || 0,
+            image.offsetY || 0
+        );
+    }
+
+    /*
+        Draw selected mouth overlay last.
+    */
+    if (
+        selectedMouthType &&
+        currentMouthSet &&
+        currentMouthSet[selectedMouthType] !== undefined
+    ) {
+        drawAtlasImage(
+            currentMouthSet[selectedMouthType],
+            0,
+            0
+        );
+    }
+
+    const firstImage = frame.images[0];
+
+    if (firstImage && firstImage.id !== null) {
+        frameInput.value = firstImage.id;
+    }
+
+    updateInfo();
+}
+
+
+
+function frameHasDrawableImages(frame) {
+    return (
+        frame &&
+        frame.images &&
+        frame.images.length > 0
+    );
+}
+
+
+/*
+    Play an ACD animation using per-frame duration.
+*/
+function playAnimation(name) {
+    stopAnimation();
+
+    currentAnimationName = name;
+    animationSelect.value = name;
+
+    const animation = acdData.animations[name];
+
+    if (!animation || !animation.frames || animation.frames.length === 0) {
+        return;
+    }
+
+    isPlaying = true;
+    currentFrameIndexInAnimation = 0;
+
+    function step() {
+        const frame = animation.frames[currentFrameIndexInAnimation];
+
+        /*
+            Duration 0 with no image usually acts like
+            an end/control frame in the ACD.
+            Stop without clearing the canvas.
+        */
+        if (
+            frame &&
+            frame.duration === 0 &&
+            !frameHasDrawableImages(frame)
+        ) {
+            isPlaying = false;
+            animationTimer = null;
+            updateInfo();
+            return;
+        }
+
+        if (frameHasDrawableImages(frame)) {
+            drawAcdFrame(frame);
+        }
+
+        if (
+            playSoundEffectsCheckbox.checked &&
+            frame.soundEffect
+        ) {
+            playSoundEffect(
+                frame.soundEffect
+            );
+        }
+
+        let duration = frame.duration;
+
+        if (!duration || duration <= 0) {
+            duration = 10;
+        }
+
+        /*
+            For now, ignore ExitBranch and branching.
+            Just advance linearly.
+        */
+        currentFrameIndexInAnimation++;
+
+        if (currentFrameIndexInAnimation >= animation.frames.length) {
+            isPlaying = false;
+            animationTimer = null;
+            updateInfo();
+            return;
+        }
+
+        animationTimer = setTimeout(
+            step,
+            duration * DURATION_MULTIPLIER
+        );
+    }
+
+    step();
+}
+
+/*
+    Stop current animation.
+*/
+
+function stopAnimation() {
+    if (animationTimer !== null) {
+        clearTimeout(animationTimer);
+        animationTimer = null;
+    }
+
+    isPlaying = false;
+
+    updateInfo();
+}
+
+/*
+    Select animation without playing.
+*/
+
+function selectAnimationByIndex(index) {
+    stopAnimation();
+
+    if (animationNames.length === 0) {
+        return;
+    }
+
+    if (index < 0) {
+        index = animationNames.length - 1;
+    }
+
+    if (index >= animationNames.length) {
+        index = 0;
+    }
+
+    currentAnimationIndex = index;
+    currentAnimationName = animationNames[currentAnimationIndex];
+
+    animationSelect.value = currentAnimationName;
+
+    const animation = acdData.animations[currentAnimationName];
+
+    currentFrameIndexInAnimation = 0;
+
+    if (animation && animation.frames.length > 0) {
+        drawAcdFrame(animation.frames[0]);
+    }
+
+    updateInfo();
+}
+
+/*
+    Navigate animations.
+*/
+
+function previousAnimation() {
+    selectAnimationByIndex(currentAnimationIndex - 1);
+}
+
+function nextAnimation() {
+    selectAnimationByIndex(currentAnimationIndex + 1);
+}
+
+/*
+    Step frames inside selected animation.
+*/
+
+function previousFrameInAnimation() {
+    stopAnimation();
+
+    const animation = acdData.animations[currentAnimationName];
+
+    if (!animation || animation.frames.length === 0) {
+        return;
+    }
+
+    currentFrameIndexInAnimation--;
+
+    if (currentFrameIndexInAnimation < 0) {
+        currentFrameIndexInAnimation = animation.frames.length - 1;
+    }
+
+    drawAcdFrame(animation.frames[currentFrameIndexInAnimation]);
+}
+
+function nextFrameInAnimation() {
+    stopAnimation();
+
+    const animation = acdData.animations[currentAnimationName];
+
+    if (!animation || animation.frames.length === 0) {
+        return;
+    }
+
+    currentFrameIndexInAnimation++;
+
+    if (currentFrameIndexInAnimation >= animation.frames.length) {
+        currentFrameIndexInAnimation = 0;
+    }
+
+    drawAcdFrame(animation.frames[currentFrameIndexInAnimation]);
+}
+
+/*
+    Jump to a raw atlas frame ID.
+
+    Useful for debugging.
+*/
+
+function jumpToFrame() {
+    stopAnimation();
+
+    const frameId = Number(frameInput.value);
+
+    ctx.clearRect(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+
+    currentDrawnFrameIds = [];
+
+    drawAtlasImage(frameId, 0, 0);
+
+    updateInfo();
+}
+
+/*
+    Info panel.
+*/
+
+function updateInfo() {
+    if (!acdData || !currentAnimationName) {
+        info.textContent = "Loading...";
+        return;
+    }
+
+    const animation = acdData.animations[currentAnimationName];
+
+    let frame = null;
+
+    if (
+        animation &&
+        animation.frames &&
+        animation.frames[currentFrameIndexInAnimation]
+    ) {
+        frame = animation.frames[currentFrameIndexInAnimation];
+    }
+
+    const drawn = currentDrawnFrameIds.length > 0
+        ? currentDrawnFrameIds.join(", ")
+        : "none";
+
+    const availableMouths =
+    Object.keys(currentMouthSet).length > 0
+        ? Object.keys(currentMouthSet).join(", ")
+        : "none";
+
+    info.textContent =
+`Animation: ${currentAnimationName}
+Playing: ${isPlaying}
+Animation number: ${currentAnimationIndex + 1} / ${animationNames.length}
+Frame index: ${currentFrameIndexInAnimation}
+Total frames: ${animation ? animation.frames.length : "N/A"}
+Drawn atlas image IDs: ${drawn}
+Selected mouth: ${selectedMouthType || "none"}
+Available mouths: ${availableMouths}
+Frame duration: ${frame ? frame.duration : "N/A"}
+Transition type: ${animation ? animation.transitionType : "N/A"}
+Return animation: ${animation && animation.return ? animation.return : "none"}
+
+Keyboard:
+A / D = previous / next animation
+W = play selected animation
+S = stop
+Q / E = previous / next frame`;
+}
+
+
+
+
+/*
+    Button events.
+*/
+
+document
+    .getElementById("playBtn")
+    .addEventListener("click", () => {
+        playAnimation(currentAnimationName);
+    });
+
+document
+    .getElementById("stopBtn")
+    .addEventListener("click", () => {
+        stopAnimation();
+    });
+
+document
+    .getElementById("prevAnimationBtn")
+    .addEventListener("click", () => {
+        previousAnimation();
+    });
+
+document
+    .getElementById("nextAnimationBtn")
+    .addEventListener("click", () => {
+        nextAnimation();
+    });
+
+document
+    .getElementById("prevFrameBtn")
+    .addEventListener("click", () => {
+        previousFrameInAnimation();
+    });
+
+document
+    .getElementById("nextFrameBtn")
+    .addEventListener("click", () => {
+        nextFrameInAnimation();
+    });
+
+document
+    .getElementById("jumpFrameBtn")
+    .addEventListener("click", () => {
+        jumpToFrame();
+    });
+
+
+
+animationSelect.addEventListener("change", () => {
+    const selectedName = animationSelect.value;
+
+    currentAnimationIndex = animationNames.indexOf(selectedName);
+    currentAnimationName = selectedName;
+
+    stopAnimation();
+
+    const animation = acdData.animations[currentAnimationName];
+
+    currentFrameIndexInAnimation = 0;
+
+    if (animation && animation.frames.length > 0) {
+        drawAcdFrame(animation.frames[0]);
+    }
+});
+
+mouthSelect.addEventListener("change", () => {
+    selectedMouthType = mouthSelect.value;
+
+    const animation = acdData.animations[currentAnimationName];
+
+    if (
+        animation &&
+        animation.frames &&
+        animation.frames[currentFrameIndexInAnimation]
+    ) {
+        drawAcdFrame(
+            animation.frames[currentFrameIndexInAnimation]
+        );
+    }
+});
+
+const playSoundEffectsCheckbox =
+    document.getElementById(
+        "playSoundEffects"
+    );
+
+const soundCache = {};
+
+/*
+    Keyboard controls.
+*/
+
+document.addEventListener("keydown", event => {
+    if (event.key.toLowerCase() === "a") {
+        previousAnimation();
+    }
+
+    if (event.key.toLowerCase() === "d") {
+        nextAnimation();
+    }
+
+    if (event.key.toLowerCase() === "w") {
+        playAnimation(currentAnimationName);
+    }
+
+    if (event.key.toLowerCase() === "s") {
+        stopAnimation();
+    }
+
+    if (event.key.toLowerCase() === "q") {
+        previousFrameInAnimation();
+    }
+
+    if (event.key.toLowerCase() === "e") {
+        nextFrameInAnimation();
+    }
+});
+
+/*
+    Startup.
+*/
+
+atlas.onload = async () => {
+    try {
+        atlasSource = atlas;
+
+        await loadAcdJson();
+    } catch (error) {
+        console.error(error);
+        alert(
+            "Could not load bonzi_animations.json. Make sure it is next to index.html."
+        );
+    }
+};
+
+atlas.onerror = () => {
+    alert(
+        "Could not load bonzi_atlas.webp. Make sure it is next to index.html."
+    );
+};
+</script>
+</body>
+</html>

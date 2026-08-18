@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Bonzi Atlas Viewer</title>
+
+<style>
+body {
+    font-family: Arial, sans-serif;
+    background: #202020;
+    color: white;
+    text-align: center;
+}
+
+canvas {
+    border: 2px solid white;
+    /*
+           Internal canvas size is 200x160.
+           Visual size is scaled up.
+        */
+    width: 400px;
+    height: 320px;
+    
+    background:
+            repeating-conic-gradient(
+                #444 0% 25%,
+                #222 0% 50%
+            ) 50% / 20px 20px;
+    margin-top: 10px;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    
+}
+
+.controls {
+    margin: 20px;
+}
+
+input {
+    width: 100px;
+    font-size: 16px;
+    text-align: center;
+}
+
+button {
+    font-size: 16px;
+    padding: 5px 10px;
+}
+</style>
+</head>
+<body>
+
+<h1>Bonzi Atlas Viewer</h1>
+
+<div class="controls">
+    <button onclick="previousFrame()">◀ Prev</button>
+
+    <input
+        type="number"
+        id="frameInput"
+        value="0"
+        min="0"
+        onchange="setFrame(this.value)"
+    >
+
+    <button onclick="nextFrame()">Next ▶</button>
+</div>
+
+<div id="info"></div>
+
+<canvas
+    id="viewer"
+    width="200"
+    height="160">
+</canvas>
+
+<script>
+
+const FRAME_WIDTH = 200;
+const FRAME_HEIGHT = 160;
+
+/*
+ * Change this if you generated
+ * the atlas with a different column count.
+ */
+const COLS = 36;
+
+let currentFrame = 0;
+
+const atlas = new Image();
+atlas.src = "bonzi_atlas.webp";
+
+const canvas = document.getElementById("viewer");
+const ctx = canvas.getContext("2d");
+
+atlas.onload = () => {
+    drawFrame(0);
+};
+
+function drawFrame(frameId)
+{
+    currentFrame = parseInt(frameId);
+
+    const col = currentFrame % COLS;
+    const row = Math.floor(currentFrame / COLS);
+
+    const sx = col * FRAME_WIDTH;
+    const sy = row * FRAME_HEIGHT;
+
+    ctx.clearRect(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+
+    ctx.drawImage(
+        atlas,
+        sx,
+        sy,
+        FRAME_WIDTH,
+        FRAME_HEIGHT,
+        0,
+        0,
+        FRAME_WIDTH,
+        FRAME_HEIGHT
+    );
+
+    document.getElementById("frameInput").value =
+        currentFrame;
+
+    document.getElementById("info").innerHTML =
+        `
+        Frame: ${currentFrame}<br>
+        Column: ${col}<br>
+        Row: ${row}<br>
+        Atlas X: ${sx}<br>
+        Atlas Y: ${sy}
+        `;
+}
+
+function setFrame(frame)
+{
+    drawFrame(Number(frame));
+}
+
+function previousFrame()
+{
+    drawFrame(
+        Math.max(0, currentFrame - 1)
+    );
+}
+
+function nextFrame()
+{
+    drawFrame(currentFrame + 1);
+}
+
+document.addEventListener(
+    "keydown",
+    e =>
+    {
+        if (e.key === "ArrowLeft")
+            previousFrame();
+
+        if (e.key === "ArrowRight")
+            nextFrame();
+    }
+);
+
+</script>
+
+</body>
+</html>
